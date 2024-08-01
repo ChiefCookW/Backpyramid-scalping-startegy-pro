@@ -1,0 +1,79 @@
+//@version=5
+indicator('Backpyramid tqqq scalping strategy pro', overlay=true)
+
+// default values
+var defTotalAmount = 3000
+var defNumberOfEntryPoints = 8
+var defRatio = 0.9
+var defMaxDrawdown = 70
+var defLookbackPeriod = 120
+
+// Inputs
+var totalAmount = input.int(title='Total Amount', defval = defTotalAmount, minval = 0)
+var numberOfEntryPoints = input.int(title='Number of entry points', defval=defNumberOfEntryPoints, minval=0, maxval=10)
+var ratio = input.float(title='Geometric Progression Ratio', defval = defRatio, minval = 0, maxval = 1)
+var maxDrawdown = input.int(title='Max drawndown, %', defval=defMaxDrawdown, minval=0, maxval=100)
+var lookbackPeriod = input.int(title='Lookback period in days', defval=defLookbackPeriod, minval=0, maxval=360)
+
+var int rightEdgeBarIndex = na
+if (bar_index % 10 == 0) 
+    rightEdgeBarIndex := bar_index + 200
+
+highestHigh = ta.highest(high, lookbackPeriod)
+
+_draw_line(price, col) =>
+    id = line.new(rightEdgeBarIndex - 500, price, rightEdgeBarIndex, price, color=col, width=1, extend=extend.right)
+
+_draw_label(price, txt, txtColor) =>
+    id = label.new(x=rightEdgeBarIndex, y=price, text=txt, textcolor=txtColor, style=label.style_none)
+    label.set_text(id, txt)
+    label.set_textcolor(id, txtColor)
+    label.set_size(id, size.normal)
+
+_label_txt(i, maxDrawdown, numSplits, percentageStr, amountStr, price) =>
+    if i == 0
+        "MD: " + str.tostring(maxDrawdown) + "%, EP: " + str.tostring(numSplits) + ", GP Ratio: " + str.tostring(ratio)
+    else
+        str.tostring(percentageStr) + " " + str.tostring(amountStr) + ", " + str.tostring(price)
+
+calc_geometric_progression(totalAmount, numberOfEntryPoints, ratio) =>
+    sum_r = 0.0
+    parts = array.new_float(numberOfEntryPoints + 1)
+    percentages = array.new_float(numberOfEntryPoints + 1)
+    array.set(parts, 0, -1)
+    array.set(percentages, 0, -1)
+    for i = 0 to numberOfEntryPoints - 1
+        sum_r := sum_r + math.pow(ratio, i)
+    a = totalAmount / sum_r
+    for i = 1 to numberOfEntryPoints
+        part = a * math.pow(ratio, numberOfEntryPoints - i)
+        array.set(parts, i, part)
+        array.set(percentages, i, (part / totalAmount) * 100)
+    [parts, percentages]
+
+// calculations for the lines 
+[parts, percentages] = calc_geometric_progression(totalAmount, numberOfEntryPoints, ratio)
+commonDifference = 1.0 / (numberOfEntryPoints)
+maxDrawdownPercentage = maxDrawdown / 100.0
+stepSize = (highestHigh * maxDrawdownPercentage) / (numberOfEntryPoints)
+totalPositionSize = 0
+totalSharesCount = 0
+ 
+_draw_retracement(startPrice, endPrice) =>
+    iHL = startPrice > endPrice
+    diff = (iHL ? -1 : 1) * math.abs(startPrice - endPrice)
+    if barstate.islast
+        for i = 0 to numberOfEntryPoints
+            level = i * stepSize
+            price = startPrice - level
+            priceInProcentage = i * commonDifference
+            percentageStr = str.tostring(array.get(percentages, i), format.mintick) + '%'
+            amountStr = str.tostring(array.get(parts, i), format.mintick) + ' EUR'
+            textInLabel = _label_txt(i, maxDrawdown, numberOfEntryPoints, percentageStr, amountStr, price)
+            color = (i == 0) ? color.gray : #67b596
+            _draw_line(price, color)
+            _draw_label(price, textInLabel, color)
+
+p1 = highestHigh
+p2 = highestHigh * (1 - maxDrawdownPercentage)
+_draw_retracement(p1, p2)
