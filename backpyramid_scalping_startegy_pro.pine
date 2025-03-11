@@ -1,19 +1,21 @@
 //@version=6
-indicator('Backpyramid tqqq scalping strategy pro', overlay=true)
+indicator('Enhanced TYKU-Q Scalping Strategy', overlay=true)
 
-// default values
-var defTotalAmount = 2000
-var defNumberOfEntryPoints = 8
-var defRatio = 0.8
-var defMaxDrawdown = 70
-var defLookbackPeriod = 60
+// Default values
+var defTotalAmount = 4000
+var defNumberOfEntryPoints = 4
+var defMaxDrawdown = 80
+var defLookbackPeriod = 120
+var defEntryThreshold = 30  // Start buying only after a -30% drop
+var defTP = 10  // Default number of units extra for TP
 
 // Inputs
-var totalAmount = input.int(title='Total Amount', defval = defTotalAmount, minval = 0)
+var totalAmount = input.int(title='Total Amount', defval=defTotalAmount, minval=0)
 var numberOfEntryPoints = input.int(title='Number of entry points', defval=defNumberOfEntryPoints, minval=0, maxval=10)
-var ratio = input.float(title='Geometric Progression Ratio', defval = defRatio, minval = 0, maxval = 1)
-var maxDrawdown = input.int(title='Max drawndown, %', defval=defMaxDrawdown, minval=0, maxval=100)
+var maxDrawdown = input.int(title='Max drawdown, %', defval=defMaxDrawdown, minval=0, maxval=100)
 var lookbackPeriod = input.int(title='Lookback period in days', defval=defLookbackPeriod, minval=0, maxval=360)
+var entryThreshold = input.int(title='Drawdown Start Threshold (%)', defval=defEntryThreshold, minval=0, maxval=100)
+var takeProfitMultiplier = input.float(title='Take Profit units', defval=defTP, minval=1, maxval=10000)
 
 var int rightEdgeBarIndex = na
 if (bar_index % 10 == 0) 
@@ -24,75 +26,34 @@ highestHigh = ta.highest(high, lookbackPeriod)
 _draw_line(price, col) =>
     id = line.new(rightEdgeBarIndex - 500, price, rightEdgeBarIndex, price, color=col, width=1, extend=extend.right)
 
-_draw_label(price, txt, txtColor) =>
-    id = label.new(x=rightEdgeBarIndex, y=price, text=txt, textcolor=txtColor, style=label.style_none)
-    label.set_text(id, txt)
-    label.set_textcolor(id, txtColor)
-    label.set_size(id, size.large)
+draw_take_profit(price) =>
+    takeProfitPrice = price + 15
+    _draw_line(takeProfitPrice, color.green)
+    //label.new(x=rightEdgeBarIndex, y=takeProfitPrice, text='Take Profit: ' + str.tostring(takeProfitPrice, format.mintick), textcolor=color.green)
 
-_label_txt(percentageStr, amountStr, sharesCount, price) =>
-    str.tostring(percentageStr) + ", " + str.tostring(amountStr) + ", " + str.tostring(sharesCount) + ", " + str.tostring(price)
+// Calculate step size for retracement levels
+maxDrawdownPercentage = 1 - maxDrawdown / 100.0
+entryThresholdPercentage = 1 - entryThreshold / 100.0
+rangeTop = highestHigh*entryThresholdPercentage
+rangeBottom = highestHigh*maxDrawdownPercentage
+stepSize = (rangeTop - rangeBottom) / (numberOfEntryPoints - 1)
 
-_label_txt_info(maxDrawdown, numSplits, totalPositionSize, totalSharesCount, totalSharesCountNow) =>
-    "MD: " + str.tostring(maxDrawdown) + "%, EP: " + str.tostring(numSplits) + ", GP Ratio: " + str.tostring(ratio) + ", TPS: " + str.tostring(totalPositionSize) + " $, TSC: " + str.tostring(totalSharesCount) + ", TSCNow: " + str.tostring(totalSharesCountNow)
-
-calc_geometric_progression(totalAmount, numberOfEntryPoints, ratio) =>
-    sum_r = 0.0
-    parts = array.new_float(numberOfEntryPoints + 1)
-    percentages = array.new_float(numberOfEntryPoints + 1)
-    for i = 0 to numberOfEntryPoints - 1
-        sum_r := sum_r + math.pow(ratio, i)
-    a = totalAmount / sum_r
-    for i = 1 to numberOfEntryPoints
-        part = a * math.pow(ratio, numberOfEntryPoints - i)
-        array.set(parts, i, part)
-        array.set(percentages, i, (part / totalAmount) * 100)
-    [parts, percentages]
-
-// calculations for the lines 
-[parts, percentages] = calc_geometric_progression(totalAmount, numberOfEntryPoints, ratio)
-commonDifference = 1.0 / (numberOfEntryPoints)
-maxDrawdownPercentage = maxDrawdown / 100.0
-stepSize = (highestHigh * maxDrawdownPercentage) / (numberOfEntryPoints)
-
+// Draw retracement levels and entry points
 _draw_retracement(startPrice, endPrice) =>
-    var totalPositionSize = 0.0
-    var totalSharesCount = 0.0
-    iHL = startPrice > endPrice
-    diff = (iHL ? -1 : 1) * math.abs(startPrice - endPrice)
     if barstate.islast
-        for i = 0 to numberOfEntryPoints
+        for i = 0 to numberOfEntryPoints - 1
             level = i * stepSize
-            // raw values
             price = math.round(startPrice - level, 2)
-            percentage = array.get(percentages, i)
-            amount = array.get(parts, i)
-            sharesCount = math.round(array.get(parts, i) / price, 1)
-            // str versions of values
-            priceStr = str.tostring(price, format.mintick)
-            percentageStr = str.tostring(percentage, format.mintick) + '%'
-            amountStr = str.tostring(amount, format.mintick) + ' $'
-            sharesCountStr = str.tostring(sharesCount) + " Shares"
-            textInLabel = _label_txt(percentageStr, amountStr, sharesCountStr, priceStr)
-            // #67b596
-            color = color.aqua
-            if i == 0
-                continue
-            _draw_line(price, color)
-            _draw_label(price, textInLabel, color)
-            if price >= close
-                totalPositionSize += amount
-                totalSharesCount += sharesCount
-            if close == price
-                alert("Price has reached one of the target levels: " + str.tostring(price), alert.freq_once_per_bar)
-        totalPositionSizeRounded = math.round(totalPositionSize, 0)
-        totalSharesCountRounded = math.round(totalSharesCount, 1)
-        var totalSharesCountNow = math.round(totalPositionSize / close, 1)
-        textInLabel = _label_txt_info(maxDrawdown, numberOfEntryPoints, totalPositionSizeRounded, totalSharesCountRounded, totalSharesCountNow)
-        color = color.gray
-        _draw_line(startPrice, color)
-        _draw_label(startPrice, textInLabel, color)
+            
+            // if price > highestHigh * (1 - entryThresholdPercentage)
+            //     continue  // Skip buying if price hasn't dropped enough
 
-p1 = highestHigh
-p2 = highestHigh * (1 - maxDrawdownPercentage)
-_draw_retracement(p1, p2)
+            
+            _draw_line(price, color.aqua)
+            oneBuyinSize = defTotalAmount/defNumberOfEntryPoints
+            takeProfitPrice = price * takeProfitMultiplier
+            tekstas = 'Entry: ' + str.tostring(price, format.mintick) + ' Take Profit: ' + str.tostring(takeProfitPrice, format.mintick) + ' Buyinsize: ' + str.tostring(oneBuyinSize)
+            label.new(x=rightEdgeBarIndex, y=price, text=tekstas, textcolor=color.white)
+            //draw_take_profit(price)  // Automatically set take profit levels
+
+_draw_retracement(rangeTop, rangeBottom)
